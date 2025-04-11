@@ -7,9 +7,10 @@ import requests
 from datetime import datetime
 from dateutil import parser
 import logging
+import re
 
 # Import the specialized Trendlink API module
-from trendlink_api import get_curated_trends
+from trendlink_api import get_curated_trends, get_trend_instruments
 # Import the OpenAI client module
 from openai_client import get_gpt_response
 
@@ -96,6 +97,65 @@ def format_trendlink_data_for_chat(data):
         app.logger.error(f"Error formatting Trendlink data: {e}")
         return f"Error formatting Trendlink data: {str(e)}"
 
+# Helfer-Funktion zur Erkennung von spezifischen Trendaktien-Anfragen
+def extract_trend_request(message):
+    """
+    Extrahiert Trend-Anfragen aus der Nutzereingabe.
+    
+    Args:
+        message (str): Die Nachricht des Nutzers
+        
+    Returns:
+        tuple: (ist_trend_aktien_anfrage, trendname) oder (False, None) wenn keine solche Anfrage
+    """
+    # Muster für Anfragen nach Aktien in einem bestimmten Trend
+    patterns = [
+        r'(?:aktien|wertpapiere|etfs?|fonds|investment|investieren|anlage)\s+(?:zu|für|im|zum|über|in|bereich|sektor|thema|themen|trend)\s+([a-zäöüß\s-]+)',
+        r'(?:top|beste|gute|empfehlen\w*|interessante|lohnend\w*|wichtig\w*)\s+(?:\d+\s+)?(?:aktien|wertpapiere|etfs?|fonds|titel|investments?)\s+(?:zu|für|im|zum|über|in|bereich|sektor|thema|themen|trend)\s+([a-zäöüß\s-]+)',
+        r'(?:welche|was\s+sind)\s+(?:die|)\s+(?:top|beste|gute|empfehlen\w*|interessante|lohnend\w*|wichtig\w*)\s+(?:\d+\s+)?(?:aktien|wertpapiere|etfs?|fonds|titel|investments?)\s+(?:zu|für|im|zum|über|in|bereich|sektor|thema|themen|trend)\s+([a-zäöüß\s-]+)',
+        r'(?:nice|top)\s+(?:\d+)?\s+(?:aktien|wertpapiere|etfs?|fonds|titel|investment|investments?)\s+(?:im|zum|zu|für|über|in|bereich|sektor|thema|themen|trend)\s+([a-zäöüß\s-]+)'
+    ]
+    
+    message_lower = message.lower()
+    
+    for pattern in patterns:
+        matches = re.search(pattern, message_lower)
+        if matches:
+            trend_name = matches.group(1).strip()
+            return True, trend_name
+    
+    return False, None
+
+# Helfer-Funktion zur Überprüfung, ob eine Anfrage themenrelevant ist
+def is_finance_trend_related(message):
+    """
+    Überprüft, ob die Nachricht sich auf Finanzen, Trends oder Marktthemen bezieht.
+    
+    Args:
+        message (str): Die Nachricht des Nutzers
+        
+    Returns:
+        bool: True, wenn die Nachricht themenrelevant ist, sonst False
+    """
+    # Liste von Begriffen, die auf eine themenrelevante Anfrage hindeuten
+    finance_terms = [
+        "aktie", "aktien", "börse", "kurs", "kurse", "markt", "märkte",
+        "finanz", "finanzen", "geld", "anlage", "anlegen", "investieren", 
+        "investment", "fonds", "etf", "sparplan", "dividende", "rendite",
+        "bank", "zins", "zinsen", "inflation", "wirtschaft", "konjunktur",
+        "trend", "trends", "trendig", "trendlink", "entwicklung", "wachstum",
+        "sektor", "branche", "industrie", "technologie", "rohstoff", "rohstoffe",
+        "krypto", "bitcoin", "ethereum", "blockchain", "nft", "token",
+        "wertpapier", "wertpapiere", "depot", "portfolio", "diversifikation",
+        "gewinn", "verlust", "risiko", "chance", "prognose", "analyse", "bewertung",
+        "isin", "wkn", "ticker", "symbol", "chart", "kursverlauf", "performance"
+    ]
+    
+    message_lower = message.lower()
+    
+    # Prüfen, ob mindestens ein themenrelevanter Begriff in der Nachricht vorkommt
+    return any(term in message_lower for term in finance_terms)
+
 # Root endpoint to render the chat interface
 @app.route("/", methods=["GET"])
 def index():
@@ -111,9 +171,9 @@ def chat():
     Chat endpoint that processes user messages and responds using OpenAI's GPT-4,
     incorporating data from Trendlink when relevant.
     
-    If the message is about trends, it uses the specialized get_curated_trends() function
-    to fetch the latest curated trends directly from the Trendlink API and provides them
-    to GPT-4 for a contextualized, expert response.
+    This bot ONLY answers finance and trend-related questions, using Trendlink data
+    as the primary source for all trend information. Non-relevant questions will be
+    politely declined.
     """
     try:
         data = request.json
@@ -123,37 +183,73 @@ def chat():
             
         user_message = data["message"]
         
-        # Trend-Keywords für die Erkennung relevanter Anfragen
+        # Prüfen, ob die Anfrage themenrelevant ist (Finanzen/Trends)
+        if not is_finance_trend_related(user_message):
+            # Nicht-themenrelevante Anfrage höflich ablehnen
+            return jsonify({
+                "response": "Ich bin spezialisiert auf Finanz- und Trend-Themen und kann Ihnen leider keine Informationen zu anderen Bereichen geben. Bitte stellen Sie mir Fragen zu Trends, Aktien, Märkten oder Finanzthemen.",
+                "has_trend_data": False,
+                "query_type": "off_topic"
+            })
+        
+        # Prüfen, ob es eine Anfrage nach Aktien in einem spezifischen Trend ist
+        is_trend_stock_query, trend_name = extract_trend_request(user_message)
+        
+        # Standard Trend-Keywords für allgemeine Trend-Anfragen
         trend_keywords = ["trend", "trends", "trending", "aktuell", "neu", "neueste", "markt", 
                          "finanzen", "wirtschaft", "entwicklung", "zukunft", "investition"]
         
-        # Prüfen, ob es eine trend-bezogene Anfrage ist
-        is_trend_query = any(keyword in user_message.lower() for keyword in trend_keywords)
+        # Prüfen, ob es eine allgemeine trend-bezogene Anfrage ist
+        is_general_trend_query = any(keyword in user_message.lower() for keyword in trend_keywords) and not is_trend_stock_query
         
-        # Experten-System-Prompt definieren
+        # Strengen System-Prompt definieren, der das Modell auf Trendlink-Daten beschränkt
         system_prompt = (
-            "Du bist ein Finanztrend-Experte. Antworte klar, faktenbasiert und effizient. "
-            "Deine Expertise liegt in der Analyse von Markttrends und wirtschaftlichen Entwicklungen. "
-            "Halte deine Antworten präzise und nutzerorientiert. "
-            "Wenn du über Trends sprichst, sei spezifisch und stelle die relevantesten Informationen in den Vordergrund."
+            "Du bist ein spezialisierter Finanztrend-Bot, der AUSSCHLIESSLICH auf Basis der Trendlink-Datenbank "
+            "antwortet. VERWENDE NIEMALS dein allgemeines Wissen bei Trend-bezogenen Fragen, sondern NUR die "
+            "bereitgestellten Daten. Bei Fragen zu bestimmten Trends oder Aktien antworte NUR mit den Informationen, "
+            "die direkt aus den Trendlink-Daten stammen. Wenn keine relevanten Daten vorhanden sind, teile dies dem "
+            "Nutzer mit, anstatt allgemeine Informationen zu geben. "
+            "Deine Antworten sollten präzise, faktenbasiert und effizient sein. "
+            "Beantworte ausschließlich Fragen zu Finanzen, Märkten und Trends."
         )
         
         trendlink_context = ""
+        trendlink_data_type = None
         
-        # Bei trend-bezogenen Anfragen die kuratierten Trends abrufen
-        if is_trend_query:
+        # Bei Anfragen für Aktien zu einem spezifischen Trend
+        if is_trend_stock_query and trend_name:
             try:
-                logger.info("Trend query detected - fetching curated trends")
+                logger.info(f"Trend stock query detected for trend: {trend_name}")
+                
+                # Abrufen der Instrument-Daten für den Trend
+                trend_instruments = get_trend_instruments(trend_name)
+                trendlink_context = trend_instruments
+                trendlink_data_type = "trend_instruments"
+                
+                # Erweitere den System-Prompt mit den Trend-Aktien-Daten
+                system_prompt += f"\n\nHier sind die Top-Aktien im Trend '{trend_name}':\n\n{trend_instruments}"
+                system_prompt += "\n\nBasiere deine Antwort AUSSCHLIESSLICH auf diesen Daten. Ergänze KEINE zusätzlichen Informationen aus deinem eigenen Wissen."
+                logger.info(f"Successfully incorporated trend instruments data for '{trend_name}'")
+            except Exception as e:
+                logger.error(f"Error fetching trend instruments: {e}")
+                system_prompt += f"\n\nIch habe versucht, Informationen zum Trend '{trend_name}' abzurufen, aber leider sind keine Daten verfügbar. Bitte teile dem Nutzer mit, dass keine Informationen in der Trendlink-Datenbank für diesen Trend gefunden wurden."
+        
+        # Bei allgemeinen Trend-Anfragen die kuratierten Trends abrufen
+        elif is_general_trend_query:
+            try:
+                logger.info("General trend query detected - fetching curated trends")
                 trend_data = get_curated_trends(limit=5)
                 
                 # Trend-Daten in den System-Prompt einbauen
                 if trend_data:
-                    system_prompt += f"\n\nHier sind die aktuellen Trenddaten, auf die du dich in deiner Antwort beziehen sollst:\n\n{trend_data}"
+                    system_prompt += f"\n\nHier sind die aktuellen Trend-Daten aus der Trendlink-Datenbank:\n\n{trend_data}"
+                    system_prompt += "\n\nBasiere deine Antwort AUSSCHLIESSLICH auf diesen Daten. Ergänze KEINE zusätzlichen Informationen aus deinem eigenen Wissen."
                     trendlink_context = trend_data
-                    logger.info("Successfully incorporated trend data into prompt")
+                    trendlink_data_type = "curated_trends"
+                    logger.info("Successfully incorporated general trend data")
             except Exception as e:
                 logger.error(f"Error fetching curated trends: {e}")
-                system_prompt += "\n\nHinweis: Es gab ein Problem beim Abrufen der aktuellen Trenddaten. Bitte erwähne dies in deiner Antwort."
+                system_prompt += "\n\nIch habe versucht, aktuelle Trend-Daten abzurufen, aber leider sind keine Daten verfügbar. Bitte teile dem Nutzer mit, dass derzeit keine Trend-Informationen in der Trendlink-Datenbank verfügbar sind."
         
         # GPT-4 Antwort mit get_gpt_response generieren
         logger.info("Generating response with GPT-4")
@@ -163,7 +259,7 @@ def chat():
         return jsonify({
             "response": response_text,
             "has_trend_data": bool(trendlink_context),
-            "query_type": "trend_related" if is_trend_query else "general"
+            "query_type": trendlink_data_type if trendlink_data_type else "general_finance"
         })
         
     except Exception as e:
