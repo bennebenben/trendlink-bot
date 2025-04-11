@@ -40,11 +40,11 @@ def get_curated_trends(limit=5):
         logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Abfrageparameter mit Token
+    # Abfrageparameter definieren - Token als eigener Parameter
     params = {
+        "token": api_token,
         "limit": limit,
-        "sort": "date_desc",  # Neueste zuerst
-        "token": api_token    # Token als URL-Parameter statt im Header
+        "sort": "date_desc"  # Neueste zuerst
     }
     
     # Standard-Headers
@@ -54,8 +54,12 @@ def get_curated_trends(limit=5):
     }
     
     try:
-        # API-Anfrage senden
-        logger.info(f"Trendlink API-Anfrage an {api_url} wird gesendet...")
+        # URL mit Parametern für Debugging ausgeben
+        debug_url = f"{api_url}?token={api_token}&limit={limit}&sort=date_desc"
+        logger.info(f"Trendlink API-Anfrage wird vorbereitet: {debug_url}")
+        
+        # API-Anfrage senden - wichtig: params wird separat übergeben, nicht in der URL
+        logger.info(f"Sende Anfrage mit Parametern: {params}")
         response = requests.get(
             url=api_url,
             headers=headers,
@@ -63,11 +67,34 @@ def get_curated_trends(limit=5):
             timeout=10
         )
         
+        # Tatsächlich gesendete URL im Log anzeigen
+        logger.info(f"Tatsächlich gesendete URL: {response.url}")
+        logger.info(f"Request-Headers: {response.request.headers}")
+        
         # Fehlerbehandlung
         response.raise_for_status()
         
+        # Statuscode und Antwortgröße protokollieren
+        logger.info(f"Antwort-Status: {response.status_code}, Antwortgröße: {len(response.content)} Bytes")
+        
+        # Prüfen, ob Antwort vorhanden
+        if not response.content:
+            logger.warning("Leere Antwort von der API erhalten")
+            return "Keine Daten von der API erhalten"
+        
+        # Antwort-Debug für sehr niedrige Log-Level
+        logger.debug(f"Antwort-Inhalt: {response.text[:500]}...")
+        
         # JSON-Antwort parsen
         trend_data = response.json()
+        
+        # Kurze Zusammenfassung der Daten für Debug-Zwecke
+        if isinstance(trend_data, dict) and "trends" in trend_data:
+            trend_count = len(trend_data["trends"])
+            logger.info(f"Trends gefunden: {trend_count}")
+        else:
+            logger.warning(f"Unerwartetes Antwortformat: {type(trend_data)}")
+            logger.warning(f"Antwort-Inhalt: {trend_data}")
         
         # Formatieren der Daten
         return format_trend_data(trend_data)
@@ -107,9 +134,9 @@ def get_trend_instruments(trend_name, nice_top=5):
         logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Abfrageparameter mit Token und nice5 aktiviert
+    # Abfrageparameter definieren - Token als eigener Parameter
     params = {
-        "token": api_token,    # Token als URL-Parameter
+        "token": api_token,
         "nice5": "true",       # Top 5 Instrumente abrufen
         "lang": "de"           # Deutsche Sprache
     }
@@ -121,8 +148,12 @@ def get_trend_instruments(trend_name, nice_top=5):
     }
     
     try:
-        # API-Anfrage für alle Trends senden
-        logger.info(f"Trendlink API-Anfrage nach Trends an {api_url} wird gesendet...")
+        # URL mit Parametern für Debugging ausgeben
+        debug_url = f"{api_url}?token={api_token}&nice5=true&lang=de"
+        logger.info(f"Trendlink API-Anfrage wird vorbereitet: {debug_url}")
+        
+        # API-Anfrage senden - wichtig: params wird separat übergeben, nicht in der URL
+        logger.info(f"Sende Anfrage mit Parametern: {params}")
         response = requests.get(
             url=api_url,
             headers=headers,
@@ -130,11 +161,34 @@ def get_trend_instruments(trend_name, nice_top=5):
             timeout=10
         )
         
+        # Tatsächlich gesendete URL im Log anzeigen
+        logger.info(f"Tatsächlich gesendete URL: {response.url}")
+        logger.info(f"Request-Headers: {response.request.headers}")
+        
         # Fehlerbehandlung
         response.raise_for_status()
         
+        # Statuscode und Antwortgröße protokollieren
+        logger.info(f"Antwort-Status: {response.status_code}, Antwortgröße: {len(response.content)} Bytes")
+        
+        # Prüfen, ob Antwort vorhanden
+        if not response.content:
+            logger.warning("Leere Antwort von der API erhalten")
+            return f"Keine Daten zum Thema '{trend_name}' von der API erhalten"
+        
+        # Antwort-Debug für sehr niedrige Log-Level
+        logger.debug(f"Antwort-Inhalt: {response.text[:500]}...")
+        
         # JSON-Antwort parsen
         trends_data = response.json()
+        
+        # Kurze Zusammenfassung der Daten für Debug-Zwecke
+        if isinstance(trends_data, list):
+            trend_count = len(trends_data)
+            logger.info(f"Trends gefunden: {trend_count}")
+        else:
+            logger.warning(f"Unerwartetes Antwortformat: {type(trends_data)}")
+            logger.warning(f"Antwort-Inhalt: {trends_data}")
         
         # Suche nach dem angegebenen Trend
         target_trend = None
@@ -288,15 +342,56 @@ def format_trend_data(trend_data):
     
     return formatted_output
 
+# Überprüfen Sie den API-Token und führen Sie einen Test-Request durch
+def validate_api_token():
+    """
+    Überprüft, ob der API-Token korrekt konfiguriert ist und führt eine Test-Anfrage durch.
+    
+    Returns:
+        str: Validierungsmeldung mit Testergebnis
+    """
+    api_token = os.getenv("TRENDLINK_API_TOKEN")
+    
+    if not api_token:
+        return "FEHLER: TRENDLINK_API_TOKEN ist nicht in den Umgebungsvariablen definiert"
+    
+    # Test-URL für kuratierte Trends
+    api_url = "https://api-preview.trendlink.com/v2/trends/curated"
+    params = {"token": api_token, "limit": 1}
+    
+    try:
+        logger.info(f"Führe Test-Anfrage durch: {api_url} mit token={api_token}")
+        response = requests.get(url=api_url, params=params, timeout=5)
+        
+        logger.info(f"Test-Anfrage URL: {response.url}")
+        logger.info(f"Test-Anfrage Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            return f"API-Token erfolgreich validiert. Statuscode: 200 OK"
+        else:
+            return f"API-Token-Test fehlgeschlagen. Statuscode: {response.status_code}"
+    
+    except Exception as e:
+        return f"API-Token-Test fehlgeschlagen mit Fehler: {str(e)}"
+
 if __name__ == "__main__":
     """
     Wenn das Skript direkt ausgeführt wird, die kuratierten Trends abrufen und ausgeben.
     """
     try:
+        # Validiere den API-Token und zeige eine Test-URL an
+        validation_message = validate_api_token()
+        print(validation_message)
+        print("\n" + "-" * 50 + "\n")
+        
+        # Versuche, Trends abzurufen
+        print("Versuche, kuratierte Trends abzurufen...")
         trends = get_curated_trends()
         print(trends)
         
         # Beispiel: Suche nach einem spezifischen Trend
+        print("\n" + "-" * 50 + "\n")
+        print("Versuche, Informationen zum Trend 'Elektroauto' abzurufen...")
         elektroauto_trend = get_trend_instruments("Elektroauto")
         print("\n\n" + elektroauto_trend)
     except Exception as e:
