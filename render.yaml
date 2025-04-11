@@ -1,0 +1,36 @@
+services:
+  # Web service für die Trendlink AI Chatbot Flask-App
+  - type: web
+    name: trendlink-ai-chatbot
+    env: python
+    buildCommand: pip install -r requirements-deploy.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --log-level info
+    repo: https://github.com/yourusername/trendlink-ai-chatbot.git  # Ersetzen Sie dies mit Ihrer eigenen Repository-URL
+    branch: main  # Oder den Branch, den Sie verwenden möchten
+    plan: free  # Kann auf paid umgestellt werden für mehr Ressourcen
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        value: 10000  # Render verwendet seinen eigenen Port
+      - key: FLASK_APP
+        value: app.py
+      - key: PYTHONUNBUFFERED
+        value: "true"
+      - key: PYTHON_VERSION
+        value: "3.9"
+      - key: OPENAI_API_KEY
+        sync: false  # Diese Variable muss über das Render Dashboard gesetzt werden
+      - key: TRENDLINK_API_URL
+        sync: false
+      - key: TRENDLINK_API_KEY
+        sync: false
+      - key: TRENDLINK_API_TOKEN
+        sync: false
+    
+    # Erweiterte Konfiguration (bei Bedarf)
+    domains:
+      - trendlink-chatbot.onrender.com  # Benutzerdefinierte Domain, falls gewünscht 
