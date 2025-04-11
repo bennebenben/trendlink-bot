@@ -222,3 +222,4 @@ MIT
 ## Kontakt
 
 Bei Fragen oder Problemen kontaktieren Sie bitte [Ihre E-Mail-Adresse]. # trendlink-bot
+# trendlink-bot
