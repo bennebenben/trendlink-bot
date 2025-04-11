@@ -108,12 +108,12 @@ def index():
 @app.route("/chat", methods=["POST"])
 def chat():
     """
-    Chat endpoint that processes user messages and responds using OpenAI,
+    Chat endpoint that processes user messages and responds using OpenAI's GPT-4,
     incorporating data from Trendlink when relevant.
     
     If the message is about trends, it uses the specialized get_curated_trends() function
-    to fetch the latest curated trends directly from the Trendlink API and passes them
-    to get_gpt_response() to generate a contextualized response.
+    to fetch the latest curated trends directly from the Trendlink API and provides them
+    to GPT-4 for a contextualized, expert response.
     """
     try:
         data = request.json
@@ -123,45 +123,47 @@ def chat():
             
         user_message = data["message"]
         
-        # Determine if this is a trends-related query
+        # Trend-Keywords für die Erkennung relevanter Anfragen
         trend_keywords = ["trend", "trends", "trending", "aktuell", "neu", "neueste", "markt", 
-                         "finanzen", "wirtschaft", "entwicklung", "zukunft"]
+                         "finanzen", "wirtschaft", "entwicklung", "zukunft", "investition"]
+        
+        # Prüfen, ob es eine trend-bezogene Anfrage ist
         is_trend_query = any(keyword in user_message.lower() for keyword in trend_keywords)
         
-        trendlink_context = ""
-        trendlink_data_type = None
-        
-        # Definiere den Basis-System-Prompt
+        # Experten-System-Prompt definieren
         system_prompt = (
-            "Du bist ein spezialisierter Finanztrend-Bot, der Einblicke in aktuelle Markttrends gibt. "
-            "Deine Aufgabe ist es, komplexe Finanz- und Markttrends verständlich zu erklären und "
-            "Nutzern dabei zu helfen, diese Informationen für ihre Entscheidungen zu nutzen. "
-            "Antworte präzise, informativ und nutzerfreundlich."
+            "Du bist ein Finanztrend-Experte. Antworte klar, faktenbasiert und effizient. "
+            "Deine Expertise liegt in der Analyse von Markttrends und wirtschaftlichen Entwicklungen. "
+            "Halte deine Antworten präzise und nutzerorientiert. "
+            "Wenn du über Trends sprichst, sei spezifisch und stelle die relevantesten Informationen in den Vordergrund."
         )
         
-        # Try to get curated trends if it's a trend query
+        trendlink_context = ""
+        
+        # Bei trend-bezogenen Anfragen die kuratierten Trends abrufen
         if is_trend_query:
             try:
                 logger.info("Trend query detected - fetching curated trends")
-                trendlink_context = get_curated_trends(limit=5)
-                trendlink_data_type = "curated_trends"
+                trend_data = get_curated_trends(limit=5)
                 
-                # Erweitere den System-Prompt mit den Trenddaten
-                system_prompt += f"\n\nHier sind die aktuellen Trenddaten, die du in deine Antwort einbauen solltest:\n\n{trendlink_context}"
-                logger.info("Trend data incorporated into system prompt")
+                # Trend-Daten in den System-Prompt einbauen
+                if trend_data:
+                    system_prompt += f"\n\nHier sind die aktuellen Trenddaten, auf die du dich in deiner Antwort beziehen sollst:\n\n{trend_data}"
+                    trendlink_context = trend_data
+                    logger.info("Successfully incorporated trend data into prompt")
             except Exception as e:
                 logger.error(f"Error fetching curated trends: {e}")
-                # Add error information to system prompt
                 system_prompt += "\n\nHinweis: Es gab ein Problem beim Abrufen der aktuellen Trenddaten. Bitte erwähne dies in deiner Antwort."
         
-        # Get response from GPT using the new function
-        logger.info("Sending request to OpenAI API via get_gpt_response")
-        assistant_message = get_gpt_response(user_message, system_prompt)
+        # GPT-4 Antwort mit get_gpt_response generieren
+        logger.info("Generating response with GPT-4")
+        response_text = get_gpt_response(user_message, system_prompt)
         
+        # Antwort als JSON zurückgeben
         return jsonify({
-            "response": assistant_message,
-            "trendlink_data_included": bool(trendlink_context),
-            "trendlink_data_type": trendlink_data_type
+            "response": response_text,
+            "has_trend_data": bool(trendlink_context),
+            "query_type": "trend_related" if is_trend_query else "general"
         })
         
     except Exception as e:
