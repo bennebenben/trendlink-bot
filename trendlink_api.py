@@ -29,7 +29,7 @@ def get_curated_trends(limit=5):
         Exception: Bei Fehlern in der API-Kommunikation oder Datenverarbeitung
     """
     # API-Endpunkt für kuratierte Trends
-    api_url = "https://api.trendlink.com/v2/trends/curated"
+    api_url = "https://api-preview.trendlink.com/v2/trends/curated"
     
     # API-Token aus Umgebungsvariable holen
     api_token = os.getenv("TRENDLINK_API_TOKEN")
@@ -39,17 +39,17 @@ def get_curated_trends(limit=5):
         logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Request-Header mit Token
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    
-    # Abfrageparameter
+    # Abfrageparameter mit Token
     params = {
         "limit": limit,
-        "sort": "date_desc"  # Neueste zuerst
+        "sort": "date_desc",  # Neueste zuerst
+        "token": api_token    # Token als URL-Parameter statt im Header
+    }
+    
+    # Standard-Headers
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
     
     try:
@@ -96,6 +96,9 @@ def format_trend_data(trend_data):
         return "Keine Trend-Daten verfügbar"
     
     trends = trend_data.get("trends", [])
+    
+    # Limitiere auf Top 5 Trends
+    trends = trends[:5]
     
     # Überschrift
     formatted_output = "=== AKTUELLE KURATIERTE TRENDS ===\n\n"

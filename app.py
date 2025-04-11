@@ -1,8 +1,8 @@
 import os
 import json
 from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS  # CORS für Cross-Origin-Anfragen hinzugefügt
 from dotenv import load_dotenv
-import openai
 import requests
 from datetime import datetime
 from dateutil import parser
@@ -10,6 +10,8 @@ import logging
 
 # Import the specialized Trendlink API module
 from trendlink_api import get_curated_trends
+# Import the OpenAI client module
+from openai_client import get_gpt_response
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -20,9 +22,13 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
+# CORS aktivieren, um Cross-Origin-Anfragen zu erlauben
+CORS(app)
 
 # Configure OpenAI API
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Wir benötigen diesen Code nicht mehr, da wir jetzt den get_gpt_response() verwenden,
+# der den API-Key selbst aus den Umgebungsvariablen lädt
+# openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Trendlink API configuration
 TRENDLINK_API_URL = os.getenv("TRENDLINK_API_URL")
@@ -106,9 +112,8 @@ def chat():
     incorporating data from Trendlink when relevant.
     
     If the message is about trends, it uses the specialized get_curated_trends() function
-    to fetch the latest curated trends directly from the Trendlink API.
-    
-    For other Trendlink data requests, it falls back to the general fetch_trendlink_data function.
+    to fetch the latest curated trends directly from the Trendlink API and passes them
+    to get_gpt_response() to generate a contextualized response.
     """
     try:
         data = request.json
@@ -118,72 +123,40 @@ def chat():
             
         user_message = data["message"]
         
-        # Check if OpenAI API key is configured
-        if not openai.api_key:
-            return jsonify({"error": "OpenAI API key is not configured"}), 500
-        
         # Determine if this is a trends-related query
-        is_trend_query = any(keyword in user_message.lower() for keyword in 
-                            ["trend", "trends", "trending", "aktuell", "neu", "neueste"])
-        
-        # Determine if we need other Trendlink data
-        need_general_data = any(keyword in user_message.lower() for keyword in 
-                               ["data", "statistics", "market", "information", "daten", "statistik", "markt"])
+        trend_keywords = ["trend", "trends", "trending", "aktuell", "neu", "neueste", "markt", 
+                         "finanzen", "wirtschaft", "entwicklung", "zukunft"]
+        is_trend_query = any(keyword in user_message.lower() for keyword in trend_keywords)
         
         trendlink_context = ""
         trendlink_data_type = None
         
-        # Try to get curated trends first if it's a trend query
+        # Definiere den Basis-System-Prompt
+        system_prompt = (
+            "Du bist ein spezialisierter Finanztrend-Bot, der Einblicke in aktuelle Markttrends gibt. "
+            "Deine Aufgabe ist es, komplexe Finanz- und Markttrends verständlich zu erklären und "
+            "Nutzern dabei zu helfen, diese Informationen für ihre Entscheidungen zu nutzen. "
+            "Antworte präzise, informativ und nutzerfreundlich."
+        )
+        
+        # Try to get curated trends if it's a trend query
         if is_trend_query:
             try:
                 logger.info("Trend query detected - fetching curated trends")
                 trendlink_context = get_curated_trends(limit=5)
                 trendlink_data_type = "curated_trends"
+                
+                # Erweitere den System-Prompt mit den Trenddaten
+                system_prompt += f"\n\nHier sind die aktuellen Trenddaten, die du in deine Antwort einbauen solltest:\n\n{trendlink_context}"
+                logger.info("Trend data incorporated into system prompt")
             except Exception as e:
                 logger.error(f"Error fetching curated trends: {e}")
-                # Fallback to general API if specialized call fails
-                if need_general_data:
-                    trendlink_data = fetch_trendlink_data()
-                    trendlink_context = format_trendlink_data_for_chat(trendlink_data)
-                    trendlink_data_type = "general_data"
+                # Add error information to system prompt
+                system_prompt += "\n\nHinweis: Es gab ein Problem beim Abrufen der aktuellen Trenddaten. Bitte erwähne dies in deiner Antwort."
         
-        # For non-trend queries that still need market data
-        elif need_general_data:
-            logger.info("General data query detected")
-            trendlink_data = fetch_trendlink_data()
-            trendlink_context = format_trendlink_data_for_chat(trendlink_data)
-            trendlink_data_type = "general_data"
-        
-        # Construct the message for OpenAI
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant with access to market trend data. "
-                                         "Provide insightful and concise responses based on the available information. "
-                                         "If you have trend data available, incorporate it meaningfully into your response."}
-        ]
-        
-        # Add Trendlink context if available
-        if trendlink_context:
-            if trendlink_data_type == "curated_trends":
-                messages.append({"role": "system", "content": 
-                                f"Here are the latest curated trends from Trendlink:\n\n{trendlink_context}"})
-            else:
-                messages.append({"role": "system", "content": 
-                                f"Here is the latest data from Trendlink:\n\n{trendlink_context}"})
-            
-        # Add user message
-        messages.append({"role": "user", "content": user_message})
-        
-        # Get response from OpenAI
-        logger.info("Sending request to OpenAI API")
-        response = openai.chat.completions.create(
-            model="gpt-4",  # or another appropriate model
-            messages=messages,
-            max_tokens=800,
-            temperature=0.7,
-        )
-        
-        # Extract the assistant's message
-        assistant_message = response.choices[0].message.content
+        # Get response from GPT using the new function
+        logger.info("Sending request to OpenAI API via get_gpt_response")
+        assistant_message = get_gpt_response(user_message, system_prompt)
         
         return jsonify({
             "response": assistant_message,
@@ -208,4 +181,4 @@ def health_check():
 
 # Main entry point
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True) 
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5001)), debug=True) 
